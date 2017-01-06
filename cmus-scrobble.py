@@ -42,6 +42,10 @@ class MusicInfo:
     def __ne__(self, other):
         return not self == other
 
+    @property
+    def percentagePlayed(self):
+        return floor((self.elapsed * 100.0) / self.duration)
+
 
 class CMUSStatus:
     def __init__(self):
@@ -118,13 +122,9 @@ class CMUSStatus:
         self.nowPlayingInfo.elapsed += LOOP_DURATION
 
         if not self.nowPlayingInfo.scrobbledTrack and self.nowPlayingInfo.duration > 30:  # Scrobble minimum length is 30s according to last.fm api rules
-            if self.percentagePlayed >= self.scrobbleThreshold \
+            if self.nowPlayingInfo.percentagePlayed >= self.scrobbleThreshold \
                     or self.nowPlayingInfo.elapsed >= 4 * 60:  # Scrobble if elapsed duration reaches 4m according to last.fm api rules
                 self.scrobble()
-
-    @property
-    def percentagePlayed(self):
-        return floor((self.nowPlayingInfo.elapsed * 100.0) / self.nowPlayingInfo.duration)
 
     def __str__(self):
         return "{0} - {1} ({2}) {3} : {4}%" \
@@ -132,7 +132,7 @@ class CMUSStatus:
                     self.nowPlayingInfo.title,
                     self.nowPlayingInfo.album,
                     self.nowPlayingInfo.position,
-                    self.percentagePlayed)
+                    self.nowPlayingInfo.percentagePlayed)
 
 
 def scrobblerLoop():
