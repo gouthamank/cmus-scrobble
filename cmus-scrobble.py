@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
 from __future__ import print_function, division
+
 import subprocess
 import time
-import sys
 from math import floor
+
 from lastfm_auth import LastFMInstance, TokenRequestException, \
-    AuthenticationException, NotAuthenticatedException, ScrobbleException
+    AuthenticationException, NotAuthenticatedException, \
+    ScrobbleException, NowPlayingException
 
 #
 # Change the scrobble percentage here
@@ -16,33 +18,51 @@ SCROBBLE_THRESHOLD = 50  # percent
 LOOP_DURATION = 1
 
 
+class MusicInfo:
+    def __init__(self):
+        self.artist = ""
+        self.status = ""
+        self.album = ""
+        self.title = ""
+        self.duration = -1
+        self.position = -1
+        self.elapsed = 0
+        self.started = str(time.time())
+        self.scrobbledTrack = False
+
+    def __eq__(self, other):
+        return self.artist == other.artist \
+               and self.album == other.album \
+               and self.title == other.title \
+               and self.duration == other.duration
+
+    def __cmp__(self, other):  # Python 2 exclusive
+        return self.__cmp__(other)
+
+    def __ne__(self, other):
+        return not self == other
+
+
 class CMUSStatus:
     def __init__(self):
         self.scrobbleThreshold = SCROBBLE_THRESHOLD
         if self.scrobbleThreshold < 50: self.scrobbleThreshold = 50
         if self.scrobbleThreshold > 99: self.scrobbleThreshold = 99
+
         self.lastFMInstance = LastFMInstance()
-        self.status = ""
-        self.duration = -1
-        self.position = -1
-        self.artist = ""
-        self.album = ""
-        self.title = ""
-        self.elapsed = -1
-        self.started = ""
-        self.scrobbledTrack = False
+        self.nowPlayingInfo = MusicInfo()
 
     def scrobble(self):
-        self.scrobbledTrack = True
+        self.nowPlayingInfo.scrobbledTrack = True
         try:
             self.lastFMInstance.scrobble(
-                artist=self.artist,
-                album=self.album,
-                title=self.title,
-                started=self.started
+                artist=self.nowPlayingInfo.artist,
+                album=self.nowPlayingInfo.album,
+                title=self.nowPlayingInfo.title,
+                started=self.nowPlayingInfo.started
             )
         except AuthenticationException:
-            print("Error retrieving Last.fm session")
+            print("Error retrieving last.fm session")
             exit(1)
         except NotAuthenticatedException as exception:
             print("Please allow cmus-scrobble to access your account")
@@ -50,61 +70,69 @@ class CMUSStatus:
             exit(1)
         except TokenRequestException:
             print("Error retrieving access token")
+        except NowPlayingException:
+            print("Could not send now playing info to last.fm")
         except ScrobbleException:
-            print("Error scrobbling track to Last.fm")
+            print("Could not scrobble track to last.fm")
         except ValueError:
-            print("Error parsing JSON from Last.fm server")
+            print("Error parsing JSON from last.fm server")
 
-    def reset(self):
-        self.elapsed = 0
-        self.scrobbledTrack = False
-        self.started = str(time.time())
-        pass
+    def reset(self, newMusicInfo=None):
+        if newMusicInfo is None:
+            self.nowPlayingInfo = MusicInfo()
+        else:
+            self.nowPlayingInfo = newMusicInfo
+            self.lastFMInstance.updateNowPlaying(
+                artist=self.nowPlayingInfo.artist,
+                album=self.nowPlayingInfo.album,
+                title=self.nowPlayingInfo.title
+            )
 
     def apply(self, remoteOutput):  # called every LOOP_DURATION seconds
+        newMusicInfo = MusicInfo()
         for line in remoteOutput.splitlines():
             if line.startswith("status "):
-                self.status = line[7:]
-                if self.status != "playing":
+                newMusicInfo.status = line[7:]
+                if newMusicInfo.status != "playing":
                     return
 
             if line.startswith("duration "):
-                if int(line[9:]) != self.duration:
-                    self.reset()
-                    self.duration = int(line[9:])
+                newMusicInfo.duration = int(line[9:])
 
             if line.startswith("position "):
-                self.position = int(line[9:])
+                newMusicInfo.position = int(line[9:])
 
             if line.startswith("tag artist "):
-                if line[11:] != self.artist:
-                    self.reset()
-                    self.artist = line[11:]
+                newMusicInfo.artist = line[11:]
 
             if line.startswith("tag album "):
-                if line[10:] != self.album:
-                    self.reset()
-                    self.album = line[10:]
+                newMusicInfo.album = line[10:]
 
             if line.startswith("tag title "):
-                if line[10:] != self.title:
-                    self.reset()
-                    self.title = line[10:]
+                newMusicInfo.title = line[10:]
 
-        self.elapsed += LOOP_DURATION
+        if newMusicInfo != self.nowPlayingInfo:
+            self.reset(newMusicInfo)
+            return
 
-        if self.percentagePlayed >= self.scrobbleThreshold \
-                and not self.scrobbledTrack \
-                and self.duration > 30:
-            self.scrobble()
+        self.nowPlayingInfo.elapsed += LOOP_DURATION
+
+        if not self.nowPlayingInfo.scrobbledTrack and self.nowPlayingInfo.duration > 30:  # Scrobble minimum length is 30s according to last.fm api rules
+            if self.percentagePlayed >= self.scrobbleThreshold \
+                    or self.nowPlayingInfo.elapsed >= 4 * 60:  # Scrobble if elapsed duration reaches 4m according to last.fm api rules
+                self.scrobble()
 
     @property
     def percentagePlayed(self):
-        return floor((self.elapsed * 100.0) / self.duration)
+        return floor((self.nowPlayingInfo.elapsed * 100.0) / self.nowPlayingInfo.duration)
 
     def __str__(self):
         return "{0} - {1} ({2}) {3} : {4}%" \
-            .format(self.artist, self.title, self.album, self.position, self.percentagePlayed)
+            .format(self.nowPlayingInfo.artist,
+                    self.nowPlayingInfo.title,
+                    self.nowPlayingInfo.album,
+                    self.nowPlayingInfo.position,
+                    self.percentagePlayed)
 
 
 def scrobblerLoop():
@@ -115,6 +143,12 @@ def scrobblerLoop():
             status.apply(res.decode(encoding="utf-8"))
         except subprocess.CalledProcessError:
             print("cmus is not running")
+
+            """
+            # This doesn't really work if it's run as a background process
+            # so it'd be better to not do it at all
+            #
+
             try:
                 if sys.version_info[0] == 2:
                     inp = raw_input("Enter q to quit or any other key to retry.")
@@ -125,6 +159,7 @@ def scrobblerLoop():
                     exit(0)
             except SyntaxError:
                 pass
+            """
 
         time.sleep(LOOP_DURATION)
 

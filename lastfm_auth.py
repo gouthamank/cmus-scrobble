@@ -35,6 +35,10 @@ class ScrobbleException(Exception):
     pass
 
 
+class NowPlayingException(Exception):
+    pass
+
+
 class LastFMInstance:
     def __init__(self):
         self.sessionKey = None
@@ -58,6 +62,29 @@ class LastFMInstance:
     def scrobble(self, artist=None, album=None, title=None, started=None):
         if self.sessionActive:
             self.postScrobble(artist, album, title, started)
+        else:
+            self.checkSession()
+
+    def updateNowPlaying(self, artist=None, album=None, title=None):
+        if self.sessionActive:
+            self.postNowPlaying(artist, album, title)
+        else:
+            self.checkSession()
+
+    def postNowPlaying(self, artist, album, title):
+        args = {
+            'method': 'track.updateNowPlaying',
+            'artist': artist,
+            'album': album,
+            'track': title,
+            'api_key': API_KEY,
+            'sk': self.sessionKey
+        }
+        self.addSignature(args)
+        try:
+            nowPlayingResponse = requests.post(URL_API_ROOT, args)
+        except requests.RequestException:
+            raise NowPlayingException
 
     def postScrobble(self, artist, album, title, started):
         args = {
