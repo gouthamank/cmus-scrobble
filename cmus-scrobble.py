@@ -3,16 +3,18 @@
 from __future__ import print_function, division
 import subprocess
 import time
+import sys
+from math import floor
 from lastfm_auth import LastFMInstance, TokenRequestException, \
     AuthenticationException, NotAuthenticatedException, ScrobbleException
-from math import floor
 
 #
 # Change the scrobble percentage here
-SCROBBLE_THRESHOLD = 50 # percent
+SCROBBLE_THRESHOLD = 50  # percent
 #
 
 LOOP_DURATION = 1
+
 
 class CMUSStatus:
     def __init__(self):
@@ -42,9 +44,9 @@ class CMUSStatus:
         except AuthenticationException:
             print("Error retrieving Last.fm session")
             exit(1)
-        except NotAuthenticatedException as e:
+        except NotAuthenticatedException as exception:
             print("Please allow cmus-scrobble to access your account")
-            print(e)
+            print(exception)
             exit(1)
         except TokenRequestException:
             print("Error retrieving access token")
@@ -59,7 +61,7 @@ class CMUSStatus:
         self.started = str(time.time())
         pass
 
-    def apply(self, remoteOutput): # called every LOOP_DURATION seconds
+    def apply(self, remoteOutput):  # called every LOOP_DURATION seconds
         for line in remoteOutput.splitlines():
             if line.startswith("status "):
                 self.status = line[7:]
@@ -91,15 +93,19 @@ class CMUSStatus:
 
         self.elapsed += LOOP_DURATION
 
-        if self.percentagePlayed >= self.scrobbleThreshold and not self.scrobbledTrack:
+        if self.percentagePlayed >= self.scrobbleThreshold \
+                and not self.scrobbledTrack \
+                and self.duration > 30:
             self.scrobble()
 
     @property
     def percentagePlayed(self):
-        return floor( (self.elapsed * 100.0) / self.duration)
+        return floor((self.elapsed * 100.0) / self.duration)
 
     def __str__(self):
-        return "{0} - {1} ({2}) {3} : {4}%".format(self.artist, self.title, self.album, self.position, self.percentagePlayed)
+        return "{0} - {1} ({2}) {3} : {4}%" \
+            .format(self.artist, self.title, self.album, self.position, self.percentagePlayed)
+
 
 def scrobblerLoop():
     status = CMUSStatus()
@@ -109,10 +115,19 @@ def scrobblerLoop():
             status.apply(res.decode(encoding="utf-8"))
         except subprocess.CalledProcessError:
             print("cmus is not running")
-            exit(0)
-            pass
+            try:
+                if sys.version_info[0] == 2:
+                    inp = raw_input("Enter q to quit or any other key to retry.")
+                else:
+                    inp = input("Enter q to quit or any other key to retry.")
+
+                if inp == 'q':
+                    exit(0)
+            except SyntaxError:
+                pass
 
         time.sleep(LOOP_DURATION)
+
 
 if __name__ == "__main__":
     scrobblerLoop()
