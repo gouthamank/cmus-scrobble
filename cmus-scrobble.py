@@ -53,8 +53,22 @@ class CMUSStatus:
         if self.scrobbleThreshold < 50: self.scrobbleThreshold = 50
         if self.scrobbleThreshold > 99: self.scrobbleThreshold = 99
 
-        self.lastFMInstance = LastFMInstance()
         self.nowPlayingInfo = MusicInfo()
+
+        try:
+            self.lastFMInstance = LastFMInstance()
+        except AuthenticationException:
+            print("Error retrieving last.fm session")
+            exit(1)
+        except NotAuthenticatedException as exception:
+            print("Please allow cmus-scrobble to access your account")
+            print(exception)
+            exit(1)
+        except TokenRequestException:
+            print("Error retrieving access token. Please check your internet connection.\nExiting program..")
+            exit(1)
+        except ValueError:
+            print("Error parsing JSON from last.fm server")
 
     def scrobble(self):
         self.nowPlayingInfo.scrobbledTrack = True
@@ -65,19 +79,20 @@ class CMUSStatus:
                 title=self.nowPlayingInfo.title,
                 started=self.nowPlayingInfo.started
             )
-        except AuthenticationException:
-            print("Error retrieving last.fm session")
-            exit(1)
-        except NotAuthenticatedException as exception:
-            print("Please allow cmus-scrobble to access your account")
-            print(exception)
-            exit(1)
-        except TokenRequestException:
-            print("Error retrieving access token")
-        except NowPlayingException:
-            print("Could not send now playing info to last.fm")
         except ScrobbleException:
             print("Could not scrobble track to last.fm")
+        except ValueError:
+            print("Error parsing JSON from last.fm server")
+
+    def updateNowPlaying(self):
+        try:
+            self.lastFMInstance.updateNowPlaying(
+                artist=self.nowPlayingInfo.artist,
+                album=self.nowPlayingInfo.album,
+                title=self.nowPlayingInfo.title
+            )
+        except NowPlayingException:
+            print("Could not send now playing info to last.fm")
         except ValueError:
             print("Error parsing JSON from last.fm server")
 
@@ -86,11 +101,7 @@ class CMUSStatus:
             self.nowPlayingInfo = MusicInfo()
         else:
             self.nowPlayingInfo = newMusicInfo
-            self.lastFMInstance.updateNowPlaying(
-                artist=self.nowPlayingInfo.artist,
-                album=self.nowPlayingInfo.album,
-                title=self.nowPlayingInfo.title
-            )
+            self.updateNowPlaying()
 
     def apply(self, remoteOutput):  # called every LOOP_DURATION seconds
         newMusicInfo = MusicInfo()
